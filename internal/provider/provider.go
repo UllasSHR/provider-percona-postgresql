@@ -534,6 +534,9 @@ func (p *Provider) Status(c *controller.Context) (controller.Status, error) {
 	// The secret follows the naming convention: <cluster-name>-pguser-<username>.
 	// The PG operator populates this secret with all connection details including
 	// properly URL-encoded URIs for both direct and PGBouncer connections.
+	// The PGBouncer keys are present even when PGBouncer has no replicas, so
+	// they are only used when PGBouncer is running.
+	pgBouncerOn := cluster.Status.PGBouncer.Size > 0
 	var username, password, uri string
 	userSecret := &corev1.Secret{}
 	secretName := c.Name() + "-pguser-" + c.Name()
@@ -546,7 +549,7 @@ func (p *Provider) Status(c *controller.Context) (controller.Status, error) {
 		username = string(userSecret.Data["user"])
 		password = string(userSecret.Data["password"])
 		// Prefer pgbouncer-uri when PGBouncer is enabled, fall back to direct uri.
-		if v := userSecret.Data["pgbouncer-uri"]; len(v) > 0 {
+		if v := userSecret.Data["pgbouncer-uri"]; pgBouncerOn && len(v) > 0 {
 			uri = string(v)
 		} else if v := userSecret.Data["uri"]; len(v) > 0 {
 			uri = string(v)
@@ -557,10 +560,14 @@ func (p *Provider) Status(c *controller.Context) (controller.Status, error) {
 		uri = ensureSSLMode(uri)
 	}
 
-	// Use the pgbouncer-host from the secret if available (it includes the
-	// correct service FQDN for PGBouncer), otherwise fall back to cluster status.
+	// Use the pgbouncer-host from the secret when PGBouncer is running (it
+	// includes the correct service FQDN for PGBouncer), otherwise the direct
+	// host from the secret. Fall back to cluster status, which is the PGBouncer
+	// host, only when the secret has neither.
 	host := cluster.Status.Host
-	if v := userSecret.Data["pgbouncer-host"]; len(v) > 0 {
+	if v := userSecret.Data["pgbouncer-host"]; pgBouncerOn && len(v) > 0 {
+		host = string(v)
+	} else if v := userSecret.Data["host"]; len(v) > 0 {
 		host = string(v)
 	}
 
