@@ -25,6 +25,22 @@ func TestPGBouncerLoadBalancerExposed(t *testing.T) {
 	assert.False(t, pgBouncerLoadBalancerExposed(&pgv2.PerconaPGCluster{}))
 }
 
+func TestPGBouncerEnabled(t *testing.T) {
+	t.Parallel()
+
+	withReplicas := func(replicas *int32) *pgv2.PerconaPGCluster {
+		cluster := clusterWithPGBouncerExpose("")
+		cluster.Spec.Proxy.PGBouncer.Replicas = replicas
+		return cluster
+	}
+	zero, two := int32(0), int32(2)
+
+	assert.False(t, pgBouncerEnabled(&pgv2.PerconaPGCluster{}))
+	assert.True(t, pgBouncerEnabled(withReplicas(nil)))
+	assert.False(t, pgBouncerEnabled(withReplicas(&zero)))
+	assert.True(t, pgBouncerEnabled(withReplicas(&two)))
+}
+
 func TestReplaceURIHost(t *testing.T) {
 	t.Parallel()
 

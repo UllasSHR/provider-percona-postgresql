@@ -537,8 +537,8 @@ func (p *Provider) Status(c *controller.Context) (controller.Status, error) {
 	// The PG operator populates this secret with all connection details including
 	// properly URL-encoded URIs for both direct and PGBouncer connections.
 	// The PGBouncer keys are present even when PGBouncer has no replicas, so
-	// they are only used when PGBouncer is running.
-	pgBouncerOn := cluster.Status.PGBouncer.Size > 0
+	// they are only used when PGBouncer is enabled.
+	pgBouncerOn := pgBouncerEnabled(cluster)
 	var username, password, uri string
 	userSecret := &corev1.Secret{}
 	secretName := c.Name() + "-pguser-" + c.Name()
@@ -576,7 +576,7 @@ func (p *Provider) Status(c *controller.Context) (controller.Status, error) {
 	// The secret only ever carries the in-cluster Service name. When PGBouncer
 	// is a LoadBalancer the operator publishes the external address in
 	// status.host, which stays empty until the load balancer is provisioned.
-	if pgBouncerLoadBalancerExposed(cluster) {
+	if pgBouncerOn && pgBouncerLoadBalancerExposed(cluster) {
 		if cluster.Status.Host == "" {
 			return controller.Provisioning("waiting for the pgbouncer load balancer address"), nil
 		}
@@ -672,6 +672,16 @@ func parseMajorVersion(version string) (int, bool) {
 	}
 
 	return major, true
+}
+
+// pgBouncerEnabled reports whether PGBouncer is configured to run. It mirrors
+// PGProxySpec.PGBouncerEnabled from newer versions of the PG operator.
+func pgBouncerEnabled(cluster *pgv2.PerconaPGCluster) bool {
+	proxy := cluster.Spec.Proxy
+	if proxy == nil || proxy.PGBouncer == nil {
+		return false
+	}
+	return proxy.PGBouncer.Replicas == nil || *proxy.PGBouncer.Replicas != 0
 }
 
 // pgBouncerLoadBalancerExposed reports whether the operator publishes a load
