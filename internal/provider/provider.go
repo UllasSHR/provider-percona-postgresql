@@ -543,6 +543,9 @@ func (p *Provider) Status(c *controller.Context) (controller.Status, error) {
 	// The secret follows the naming convention: <cluster-name>-pguser-<username>.
 	// The PG operator populates this secret with all connection details including
 	// properly URL-encoded URIs for both direct and PGBouncer connections.
+	// The PGBouncer keys are present even when PGBouncer has no replicas, so
+	// they are only used when PGBouncer is enabled.
+	pgBouncerOn := pgBouncerEnabled(cluster)
 	var username, password, uri string
 	userSecret := &corev1.Secret{}
 	secretName := c.Name() + "-pguser-" + defaultUsername
@@ -555,7 +558,7 @@ func (p *Provider) Status(c *controller.Context) (controller.Status, error) {
 		username = string(userSecret.Data["user"])
 		password = string(userSecret.Data["password"])
 		// Prefer pgbouncer-uri when PGBouncer is enabled, fall back to direct uri.
-		if v := userSecret.Data["pgbouncer-uri"]; len(v) > 0 {
+		if v := userSecret.Data["pgbouncer-uri"]; pgBouncerOn && len(v) > 0 {
 			uri = string(v)
 		} else if v := userSecret.Data["uri"]; len(v) > 0 {
 			uri = string(v)
@@ -566,17 +569,21 @@ func (p *Provider) Status(c *controller.Context) (controller.Status, error) {
 		uri = ensureSSLMode(uri)
 	}
 
-	// Use the pgbouncer-host from the secret if available (it includes the
-	// correct service FQDN for PGBouncer), otherwise fall back to cluster status.
+	// Use the pgbouncer-host from the secret when PGBouncer is running (it
+	// includes the correct service FQDN for PGBouncer), otherwise the direct
+	// host from the secret. Fall back to cluster status, which is the PGBouncer
+	// host, only when the secret has neither.
 	host := cluster.Status.Host
-	if v := userSecret.Data["pgbouncer-host"]; len(v) > 0 {
+	if v := userSecret.Data["pgbouncer-host"]; pgBouncerOn && len(v) > 0 {
+		host = string(v)
+	} else if v := userSecret.Data["host"]; len(v) > 0 {
 		host = string(v)
 	}
 
 	// The secret only ever carries the in-cluster Service name. When PGBouncer
 	// is a LoadBalancer the operator publishes the external address in
 	// status.host, which stays empty until the load balancer is provisioned.
-	if pgBouncerLoadBalancerExposed(cluster) {
+	if pgBouncerOn && pgBouncerLoadBalancerExposed(cluster) {
 		if cluster.Status.Host == "" {
 			return controller.Provisioning("waiting for the pgbouncer load balancer address"), nil
 		}
@@ -672,6 +679,16 @@ func parseMajorVersion(version string) (int, bool) {
 	}
 
 	return major, true
+}
+
+// pgBouncerEnabled reports whether PGBouncer is configured to run. It mirrors
+// PGProxySpec.PGBouncerEnabled from newer versions of the PG operator.
+func pgBouncerEnabled(cluster *pgv2.PerconaPGCluster) bool {
+	proxy := cluster.Spec.Proxy
+	if proxy == nil || proxy.PGBouncer == nil {
+		return false
+	}
+	return proxy.PGBouncer.Replicas == nil || *proxy.PGBouncer.Replicas != 0
 }
 
 // pgBouncerLoadBalancerExposed reports whether the operator publishes a load
